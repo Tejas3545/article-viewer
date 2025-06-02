@@ -77,9 +77,13 @@ export function Summarizer({ documentText, documentId, onSummaryGenerated }: Sum
         });
         
         toast({
-          title: "Summary Saved",
-          description: "The summary has been saved and will be available to all users.",
+          title: "Summary Generated",
+          description: "The summary has been generated and saved.",
         });
+
+        if (onSummaryGenerated) {
+          onSummaryGenerated(newSummary);
+        }
       } catch (firestoreError) {
         console.error("Error saving summary to Firestore:", firestoreError);
         toast({
@@ -87,10 +91,6 @@ export function Summarizer({ documentText, documentId, onSummaryGenerated }: Sum
           description: "The summary was generated but couldn't be saved for other users.",
           variant: "destructive",
         });
-      }
-
-      if (onSummaryGenerated) {
-        onSummaryGenerated(newSummary);
       }
     } catch (error) {
       console.error('Error generating summary:', error);

@@ -142,14 +142,9 @@ export function DocumentView({ docId }: DocumentViewProps) {
                     typeof doc.type === 'string' && 
                     typeof doc.uploadedAt === 'string'
                 );
-                if (libraryDocsMetadata.length !== parsed.length) {
-                  console.warn("Some items in 'docuview-library' were not valid DocumentMetadata and were filtered out.");
-                }
-              } else {
-                console.warn("'docuview-library' in localStorage was not an array. It will be treated as empty for this update.");
               }
             } catch (parseError) {
-              console.error("Error parsing 'docuview-library' from localStorage. It will be treated as empty for this update.", parseError);
+              console.error("Error parsing 'docuview-library' from localStorage.", parseError);
             }
           }
           
@@ -168,28 +163,32 @@ export function DocumentView({ docId }: DocumentViewProps) {
                   edition: updatedDocFile.edition || currentMetadata.edition,
               };
               libraryDocsMetadata[docIndex] = updatedMetadataEntry;
-          } else {
-            console.warn(`Document with ID ${currentDocument.id} not found in 'docuview-library' metadata list during summary update.`);
           }
           
           localStorage.setItem('docuview-library', JSON.stringify(libraryDocsMetadata));
 
-          // Update summary in Firestore
+          // Update summary in Firestore silently (no toast)
           try {
             const articleRef = doc(db, "articles", currentDocument.id);
             await updateDoc(articleRef, {
               summary: summary,
               updatedAt: serverTimestamp()
             });
-            toast({ title: "Summary Synced", description: "Summary successfully updated in the cloud.", duration: 3000 });
           } catch (firestoreError) {
             console.error("Error updating summary in Firestore:", firestoreError);
-            toast({ title: "Cloud Sync Error", description: "Failed to update summary in the cloud. It is saved locally.", variant: "destructive" });
+            toast({ 
+              title: "Cloud Sync Error", 
+              description: "Failed to update summary in the cloud. It is saved locally.", 
+              variant: "destructive" 
+            });
           }
-
         } catch (e) { 
             console.error("Failed to update summary in localStorage", e); 
-            toast({ title: "Storage Error", description: "Could not save summary update due to storage limitations.", variant: "destructive"});
+            toast({ 
+              title: "Storage Error", 
+              description: "Could not save summary update due to storage limitations.", 
+              variant: "destructive"
+            });
         }
     }
   }, [currentDocument, toast]);
