@@ -12,7 +12,7 @@ import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { format } from 'date-fns';
 import { Badge } from '@/components/ui/badge';
 import { db } from '@/lib/firebase';
-import { doc, updateDoc, serverTimestamp } from 'firebase/firestore';
+import { doc, getDoc, updateDoc, serverTimestamp } from 'firebase/firestore';
 
 interface DocumentViewProps {
   docId: string;
@@ -57,22 +57,67 @@ export function DocumentView({ docId }: DocumentViewProps) {
   useEffect(() => {
     if (docId && typeof window !== 'undefined') {
       setIsLoading(true);
-      try {
-        const item = localStorage.getItem(`docuview-doc-${docId}`);
-        if (item) {
-          const parsedDoc = JSON.parse(item) as DocumentFile;
-          setDocument(parsedDoc);
-        } else {
-          toast({ title: "Document Not Found", description: "The requested document could not be found in your library.", variant: "destructive" });
-          setDocument(null); 
+      
+      const loadDocument = async () => {
+        try {
+          // First try to get the document from Firestore
+          const docRef = doc(db, "articles", docId);
+          const docSnap = await getDoc(docRef);
+          
+          if (docSnap.exists()) {
+            const firestoreData = docSnap.data();
+            const documentData: DocumentFile = {
+              id: docId,
+              name: firestoreData.name || "",
+              type: firestoreData.type || "document",
+              uploadedAt: firestoreData.uploadedAt?.toDate?.()?.toISOString() || new Date().toISOString(),
+              textContent: firestoreData.textContent || "",
+              summary: firestoreData.summary || null,
+              coverImageDataUri: firestoreData.coverImageDataUri || null,
+              author: firestoreData.author || null,
+              source: firestoreData.source || null,
+              edition: firestoreData.edition || null,
+              fileUrl: firestoreData.fileUrl || null,
+              cloudinaryPublicId: firestoreData.cloudinaryPublicId || null,
+            };
+            
+            setDocument(documentData);
+            
+            // Update localStorage with the latest data from Firestore
+            try {
+              localStorage.setItem(`docuview-doc-${docId}`, JSON.stringify(documentData));
+            } catch (storageError) {
+              console.warn("Could not update localStorage with Firestore data:", storageError);
+            }
+          } else {
+            // If not in Firestore, try localStorage as fallback
+            const item = localStorage.getItem(`docuview-doc-${docId}`);
+            if (item) {
+              const parsedDoc = JSON.parse(item) as DocumentFile;
+              setDocument(parsedDoc);
+            } else {
+              toast({ 
+                title: "Document Not Found", 
+                description: "The requested document could not be found in the cloud or local storage.", 
+                variant: "destructive" 
+              });
+              setDocument(null);
+            }
+          }
+        } catch (error) {
+          console.error("Error loading document:", error);
+          toast({ 
+            title: "Loading Error", 
+            description: "An error occurred while trying to load the document.", 
+            variant: "destructive" 
+          });
+          setDocument(null);
+        } finally {
+          setIsLoading(false);
         }
-      } catch (error) {
-        console.error("Error loading document:", error);
-        toast({ title: "Loading Error", description: "An error occurred while trying to load the document.", variant: "destructive" });
-        setDocument(null);
-      } finally {
-        setIsLoading(false);
-      }
+      };
+
+      loadDocument();
     }
   }, [docId, toast]);
 
