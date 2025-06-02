@@ -39,6 +39,7 @@ import {
 import { cn } from "@/lib/utils";
 import { db } from "@/lib/firebase";
 import { doc, setDoc, serverTimestamp, collection, onSnapshot, deleteDoc, query, orderBy, limit, startAfter, getDocs } from "firebase/firestore";
+import { compressImage } from '@/utils/image';
 
 const MAX_SLIDESHOW_ITEMS = 5;
 const SLIDESHOW_INTERVAL = 3000;
@@ -507,48 +508,65 @@ export default function HomePage() {
           const imageResult = await generateCoverImage(imageInput);
 
           if (imageResult.imageDataUri) {
-            const docWithCoverAttempt: DocumentFile = {
-              ...storedDocumentVersion,
-              coverImageDataUri: imageResult.imageDataUri,
-            };
             try {
-              localStorage.setItem(
-                `docuview-doc-${currentDocumentState.id}`,
-                JSON.stringify(docWithCoverAttempt)
-              );
-              finalCoverImageDataUri = imageResult.imageDataUri;
-              storedDocumentVersion = docWithCoverAttempt;
-              toast({
-                title: "Cover Image Generated & Stored",
-                description: "AI cover image created and saved.",
-                duration: 3000,
-              });
-            } catch (errorWithCover: any) {
-              let isQuotaError =
-                errorWithCover.name === "QuotaExceededError" ||
-                (errorWithCover.message &&
-                  errorWithCover.message.toLowerCase().includes("quota"));
-              if (isQuotaError) {
+              // Compress the cover image before saving
+              const compressedImageDataUri = await compressImage(imageResult.imageDataUri);
+              
+              const docWithCoverAttempt: DocumentFile = {
+                ...storedDocumentVersion,
+                coverImageDataUri: compressedImageDataUri,
+              };
+              
+              try {
+                localStorage.setItem(
+                  `docuview-doc-${currentDocumentState.id}`,
+                  JSON.stringify(docWithCoverAttempt)
+                );
+                finalCoverImageDataUri = compressedImageDataUri;
+                storedDocumentVersion = docWithCoverAttempt;
                 toast({
-                  title: "Cover Image Too Large",
-                  description:
-                    "Document saved, but AI cover image couldn't be stored due to size. Using placeholder.",
-                  variant: "default",
+                  title: "Cover Image Generated & Stored",
+                  description: "AI cover image created and saved.",
+                  duration: 3000,
                 });
-              } else {
-                toast({
-                  title: "Cover Image Storage Error",
-                  description:
-                    "Document saved, but AI cover image couldn't be stored due to an unexpected error.",
-                  variant: "default",
-                });
-              }
-              finalCoverImageDataUri = undefined;
+              } catch (error) {
+                const errorWithCover = error as Error;
+                console.error("Error storing cover image:", errorWithCover);
+                let isQuotaError =
+                  errorWithCover.name === "QuotaExceededError" ||
+                  (errorWithCover.message &&
+                    errorWithCover.message.toLowerCase().includes("quota"));
+                if (isQuotaError) {
+                  toast({
+                    title: "Cover Image Too Large",
+                    description:
+                      "Document saved, but AI cover image couldn't be stored due to size. Using placeholder.",
+                    variant: "default",
+                  });
+                } else {
+                  toast({
+                    title: "Cover Image Storage Error",
+                    description:
+                      "Document saved, but AI cover image couldn't be stored due to an unexpected error.",
+                    variant: "default",
+                  });
+                }
+                finalCoverImageDataUri = undefined;
 
-              localStorage.setItem(
-                `docuview-doc-${currentDocumentState.id}`,
-                JSON.stringify(storedDocumentVersion)
-              );
+                localStorage.setItem(
+                  `docuview-doc-${currentDocumentState.id}`,
+                  JSON.stringify(storedDocumentVersion)
+                );
+              }
+            } catch (error) {
+              const compressionError = error as Error;
+              console.error("Error compressing cover image:", compressionError);
+              toast({
+                title: "Cover Image Processing Failed",
+                description: "Could not process the cover image due to size constraints.",
+                variant: "default",
+              });
+              finalCoverImageDataUri = undefined;
             }
           }
         } catch (genError) {
