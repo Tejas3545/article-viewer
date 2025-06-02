@@ -4,7 +4,7 @@ import type { DocumentFile, DocumentMetadata } from '@/lib/types';
 import { Input } from '@/components/ui/input';
 import { ScrollArea } from '@/components/ui/scroll-area';
 import { Button } from '@/components/ui/button';
-import { ZoomIn, ZoomOut, Search, ChevronLeft, FileText, Loader2, UserCircle, CalendarDays, Building, Layers } from 'lucide-react';
+import { ZoomIn, ZoomOut, Search, ChevronLeft, FileText, Loader2, UserCircle, CalendarDays, Building, Layers, Download } from 'lucide-react';
 import { Summarizer } from './Summarizer';
 import Link from 'next/link';
 import { useToast } from '@/hooks/use-toast';
@@ -48,7 +48,7 @@ const isTextPlaceholder = (text: string | undefined, docName: string | undefined
 };
 
 export function DocumentView({ docId }: DocumentViewProps) {
-  const [document, setDocument] = useState<DocumentFile | null>(null);
+  const [currentDocument, setCurrentDocument] = useState<DocumentFile | null>(null);
   const [isLoading, setIsLoading] = useState(true);
   const [searchTerm, setSearchTerm] = useState('');
   const [fontSize, setFontSize] = useState(16);
@@ -81,7 +81,7 @@ export function DocumentView({ docId }: DocumentViewProps) {
               cloudinaryPublicId: firestoreData.cloudinaryPublicId || null,
             };
             
-            setDocument(documentData);
+            setCurrentDocument(documentData);
             
             // Update localStorage with the latest data from Firestore
             try {
@@ -94,14 +94,14 @@ export function DocumentView({ docId }: DocumentViewProps) {
             const item = localStorage.getItem(`docuview-doc-${docId}`);
             if (item) {
               const parsedDoc = JSON.parse(item) as DocumentFile;
-              setDocument(parsedDoc);
+              setCurrentDocument(parsedDoc);
             } else {
               toast({ 
                 title: "Document Not Found", 
                 description: "The requested document could not be found in the cloud or local storage.", 
                 variant: "destructive" 
               });
-              setDocument(null);
+              setCurrentDocument(null);
             }
           }
         } catch (error) {
@@ -111,7 +111,7 @@ export function DocumentView({ docId }: DocumentViewProps) {
             description: "An error occurred while trying to load the document.", 
             variant: "destructive" 
           });
-          setDocument(null);
+          setCurrentDocument(null);
         } finally {
           setIsLoading(false);
         }
@@ -122,11 +122,11 @@ export function DocumentView({ docId }: DocumentViewProps) {
   }, [docId, toast]);
 
   const handleSummaryUpdate = useCallback(async (summary: string) => {
-    if (document) {
-        const updatedDocFile: DocumentFile = { ...document, summary };
-        setDocument(updatedDocFile); 
+    if (currentDocument) {
+        const updatedDocFile: DocumentFile = { ...currentDocument, summary };
+        setCurrentDocument(updatedDocFile); 
         try {
-          localStorage.setItem(`docuview-doc-${document.id}`, JSON.stringify(updatedDocFile));
+          localStorage.setItem(`docuview-doc-${currentDocument.id}`, JSON.stringify(updatedDocFile));
           
           let libraryDocsMetadata: DocumentMetadata[] = [];
           const libraryDocsRaw = localStorage.getItem('docuview-library');
@@ -153,7 +153,7 @@ export function DocumentView({ docId }: DocumentViewProps) {
             }
           }
           
-          const docIndex = libraryDocsMetadata.findIndex(d => d.id === document.id);
+          const docIndex = libraryDocsMetadata.findIndex(d => d.id === currentDocument.id);
           if (docIndex > -1) {
               const currentMetadata = libraryDocsMetadata[docIndex];
               const updatedMetadataEntry: DocumentMetadata = {
@@ -169,14 +169,14 @@ export function DocumentView({ docId }: DocumentViewProps) {
               };
               libraryDocsMetadata[docIndex] = updatedMetadataEntry;
           } else {
-            console.warn(`Document with ID ${document.id} not found in 'docuview-library' metadata list during summary update.`);
+            console.warn(`Document with ID ${currentDocument.id} not found in 'docuview-library' metadata list during summary update.`);
           }
           
           localStorage.setItem('docuview-library', JSON.stringify(libraryDocsMetadata));
 
           // Update summary in Firestore
           try {
-            const articleRef = doc(db, "articles", document.id);
+            const articleRef = doc(db, "articles", currentDocument.id);
             await updateDoc(articleRef, {
               summary: summary,
               updatedAt: serverTimestamp()
@@ -192,18 +192,18 @@ export function DocumentView({ docId }: DocumentViewProps) {
             toast({ title: "Storage Error", description: "Could not save summary update due to storage limitations.", variant: "destructive"});
         }
     }
-  }, [document, toast]);
+  }, [currentDocument, toast]);
 
   const docIsPlaceholder = useMemo(() => {
-    return isTextPlaceholder(document?.textContent, document?.name, document?.type);
-  }, [document?.textContent, document?.name, document?.type]);
+    return isTextPlaceholder(currentDocument?.textContent, currentDocument?.name, currentDocument?.type);
+  }, [currentDocument?.textContent, currentDocument?.name, currentDocument?.type]);
 
   const highlightedContent = useMemo(() => {
-    if (!document?.textContent) {
+    if (!currentDocument?.textContent) {
       return <p className="text-muted-foreground italic">Document text content is empty or not available for preview.</p>;
     }
     
-    const textToDisplay = document.textContent;
+    const textToDisplay = currentDocument.textContent;
 
     if (!searchTerm.trim() || docIsPlaceholder) {
       return textToDisplay; 
@@ -223,7 +223,84 @@ export function DocumentView({ docId }: DocumentViewProps) {
       console.error("Search regex error:", e);
       return textToDisplay; 
     }
-  }, [document?.textContent, searchTerm, docIsPlaceholder]);
+  }, [currentDocument?.textContent, searchTerm, docIsPlaceholder]);
+
+  const handleDownload = useCallback(async () => {
+    if (!currentDocument) return;
+
+    try {
+      let filename = currentDocument.name;
+      const nameParts = currentDocument.name.split(".");
+      const hasExtension =
+        nameParts.length > 1 &&
+        nameParts[nameParts.length - 1].length > 0 &&
+        nameParts[nameParts.length - 1].length < 5;
+
+      if (!hasExtension) {
+        if (currentDocument.type === "text/plain" && !filename.endsWith(".txt")) {
+          filename += ".txt";
+        } else if (
+          currentDocument.type === "application/pdf" &&
+          !filename.endsWith(".pdf")
+        ) {
+          filename += ".pdf";
+        } else if (
+          (currentDocument.type === "application/msword" ||
+            currentDocument.type ===
+              "application/vnd.openxmlformats-officedocument.wordprocessingml.document") &&
+          !filename.endsWith(".docx")
+        ) {
+          filename += ".docx";
+        }
+      }
+
+      let blob: Blob;
+      if (currentDocument.fileUrl) {
+        const response = await fetch(currentDocument.fileUrl);
+        blob = await response.blob();
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement("a");
+        a.href = url;
+        a.download = filename;
+        document.body.appendChild(a);
+        a.click();
+        document.body.removeChild(a);
+        URL.revokeObjectURL(url);
+        toast({
+          title: "Download Started",
+          description: `${filename} is being downloaded.`,
+        });
+      } else if (currentDocument.textContent) {
+        // If no file URL but we have text content, create a text file
+        blob = new Blob([currentDocument.textContent], { type: "text/plain" });
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement("a");
+        a.href = url;
+        a.download = filename.endsWith(".txt") ? filename : `${filename}.txt`;
+        document.body.appendChild(a);
+        a.click();
+        document.body.removeChild(a);
+        URL.revokeObjectURL(url);
+        toast({
+          title: "Download Started",
+          description: `${filename} is being downloaded as text.`,
+        });
+      } else {
+        toast({
+          title: "Error",
+          description: "No downloadable content found for this document.",
+          variant: "destructive",
+        });
+      }
+    } catch (error) {
+      console.error("Error preparing document for download:", error);
+      toast({
+        title: "Download Failed",
+        description: error instanceof Error ? error.message : "Could not prepare document for download.",
+        variant: "destructive",
+      });
+    }
+  }, [currentDocument, toast]);
 
   if (isLoading) {
     return (
@@ -234,7 +311,7 @@ export function DocumentView({ docId }: DocumentViewProps) {
     );
   }
 
-  if (!document) {
+  if (!currentDocument) {
     return (
       <div className="flex flex-col items-center justify-center h-[calc(100vh-4rem)] p-8 text-center">
         <FileText className="w-16 h-16 text-destructive mb-4" />
@@ -249,9 +326,9 @@ export function DocumentView({ docId }: DocumentViewProps) {
   
   let placeholderSpecificMessage = "";
   if (docIsPlaceholder) {
-    const docTextContent = document?.textContent || "";
-    const docName = document?.name || "";
-    const docType = document?.type || "";
+    const docTextContent = currentDocument?.textContent || "";
+    const docName = currentDocument?.name || "";
+    const docType = currentDocument?.type || "";
 
     if (docTextContent.toLowerCase().startsWith(`pdf content for ${docName.toLowerCase()}`)) {
       placeholderSpecificMessage = `Text preview for PDF files is not currently supported. You can download the original file to view its content.`;
@@ -261,14 +338,14 @@ export function DocumentView({ docId }: DocumentViewProps) {
       placeholderSpecificMessage = `We tried to extract text from this DOCX file for preview, but an error occurred. This can happen with complex, corrupted, or password-protected files. Please check your browser's console during the upload process for specific error details if this issue persists. You can download the original file.`;
     } else if (docTextContent.toLowerCase().startsWith(`content of ${docName.toLowerCase()}`) && docTextContent.toLowerCase().includes("full parsing requires specific libraries")) {
        placeholderSpecificMessage = `The text content for this document type ("${docType}") is a placeholder because full parsing for this format requires specific libraries not yet implemented for direct preview. You can download the original file.`;
-    } else if (docType && isTextPlaceholder(document?.textContent, document?.name, document?.type)) { 
+    } else if (docType && isTextPlaceholder(currentDocument?.textContent, currentDocument?.name, currentDocument?.type)) { 
         placeholderSpecificMessage = `The text content for this document type ("${docType}") is a placeholder or could not be extracted for preview. You can download the original file.`;
     } else {
       placeholderSpecificMessage = `The text content for this document is a placeholder. The original file might be downloadable.`;
     }
   }
 
-  const displaySource = document.source && document.source.toLowerCase() !== 'file upload';
+  const displaySource = currentDocument.source && currentDocument.source.toLowerCase() !== 'file upload';
 
   return (
     <div className="flex flex-col h-[calc(100vh-4rem)]">
@@ -278,37 +355,44 @@ export function DocumentView({ docId }: DocumentViewProps) {
             <Link href="/"><ChevronLeft className="w-5 h-5" /></Link>
           </Button>
           <div className="flex-1 min-w-0">
-            <h1 className="text-lg md:text-xl font-semibold truncate flex items-center gap-2" title={document.name}>
+            <h1 className="text-lg md:text-xl font-semibold truncate flex items-center gap-2" title={currentDocument?.name}>
               <FileText className="w-5 h-5 text-primary flex-shrink-0" />
-              <span className="truncate">{document.name}</span>
+              <span className="truncate">{currentDocument?.name}</span>
             </h1>
             <div className="text-xs text-muted-foreground mt-1 flex flex-wrap gap-x-3 gap-y-1 items-center">
                 <span className="flex items-center gap-1">
                     <CalendarDays className="w-3 h-3" />
-                    {document.uploadedAt ? format(new Date(document.uploadedAt), "MMM d, yyyy, p") : 'N/A'}
+                    {currentDocument?.uploadedAt ? format(new Date(currentDocument.uploadedAt), "MMM d, yyyy, p") : 'N/A'}
                 </span>
-                {document.author && (
-                    <span className="flex items-center gap-1 truncate" title={`Author: ${document.author}`}>
+                {currentDocument?.author && (
+                    <span className="flex items-center gap-1 truncate" title={`Author: ${currentDocument.author}`}>
                         <UserCircle className="w-3 h-3" />
-                        Author: <span className="font-medium">{document.author}</span>
+                        Author: <span className="font-medium">{currentDocument.author}</span>
                     </span>
                 )}
-                {displaySource && (
-                    <span className="flex items-center gap-1 truncate" title={`Source: ${document.source}`}>
+                {displaySource && currentDocument?.source && (
+                    <span className="flex items-center gap-1 truncate" title={`Source: ${currentDocument.source}`}>
                         <Building className="w-3 h-3" />
-                        Source: <span className="font-medium">{document.source}</span>
+                        Source: <span className="font-medium">{currentDocument.source}</span>
                     </span>
                 )}
-                {document.edition && (
-                    <span className="flex items-center gap-1 truncate" title={`Edition: ${document.edition}`}>
+                {currentDocument?.edition && (
+                    <span className="flex items-center gap-1 truncate" title={`Edition: ${currentDocument.edition}`}>
                         <Layers className="w-3 h-3" />
-                        Edition: <span className="font-medium">{document.edition}</span>
+                        Edition: <span className="font-medium">{currentDocument.edition}</span>
                     </span>
                 )}
-                 <Badge variant="outline" className="text-xs">{document.type}</Badge>
+                 <Badge variant="outline" className="text-xs">{currentDocument?.type}</Badge>
             </div>
           </div>
           <div className="flex items-center gap-1 md:gap-2 flex-shrink-0">
+            <Button 
+              variant="outline" 
+              size="icon" 
+              onClick={handleDownload}
+              title="Download Document">
+              <Download className="w-5 h-5" />
+            </Button>
             <Button variant="outline" size="icon" onClick={() => setFontSize(s => Math.max(10, s - 1))} title="Zoom Out" disabled={docIsPlaceholder}>
               <ZoomOut className="w-5 h-5" />
             </Button>
@@ -339,7 +423,7 @@ export function DocumentView({ docId }: DocumentViewProps) {
                 <FileText className="h-4 w-4" />
                 <AlertTitle>Text Preview Information</AlertTitle>
                 <AlertDescription>
-                    <p className="mb-2 font-semibold">{document.textContent}</p>
+                    <p className="mb-2 font-semibold">{currentDocument.textContent}</p>
                     {placeholderSpecificMessage && (
                       <p className="mt-1 text-sm italic">
                         {placeholderSpecificMessage}
@@ -355,7 +439,7 @@ export function DocumentView({ docId }: DocumentViewProps) {
           </div>
         </ScrollArea>
         <ScrollArea className="lg:col-span-1 p-3 md:p-4 bg-card/50 lg:h-full">
-          <Summarizer documentText={document.textContent || ''} onSummaryGenerated={handleSummaryUpdate} />
+          <Summarizer documentText={currentDocument.textContent || ''} onSummaryGenerated={handleSummaryUpdate} />
         </ScrollArea>
       </div>
     </div>
