@@ -23,6 +23,7 @@ import {
   ChevronLeft,
   ChevronRight,
   Search,
+  Loader2,
 } from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
 import { format } from "date-fns";
@@ -37,10 +38,11 @@ import {
 } from "@/ai/flows/extract-document-details-flow";
 import { cn } from "@/lib/utils";
 import { db } from "@/lib/firebase";
-import { doc, setDoc, serverTimestamp, collection, onSnapshot, deleteDoc, query, orderBy } from "firebase/firestore";
+import { doc, setDoc, serverTimestamp, collection, onSnapshot, deleteDoc, query, orderBy, limit, startAfter, getDocs } from "firebase/firestore";
 
 const MAX_SLIDESHOW_ITEMS = 5;
 const SLIDESHOW_INTERVAL = 3000;
+const DOCS_PER_PAGE = 12; // Number of documents to load per page
 
 const getCloudinaryEnv = () => {
   const cloudName = process.env.NEXT_PUBLIC_CLOUDINARY_CLOUD_NAME;
@@ -117,48 +119,75 @@ export default function HomePage() {
   const [error, setError] = useState<string | null>(null);
   const [currentSlideIndex, setCurrentSlideIndex] = useState(0);
   const [slideDirection, setSlideDirection] = useState<"next" | "prev">("next");
+  const [lastDoc, setLastDoc] = useState<any>(null);
+  const [hasMore, setHasMore] = useState(true);
+  const [loadingMore, setLoadingMore] = useState(false);
   const { toast } = useToast();
   const slideshowIntervalRef = React.useRef<NodeJS.Timeout | null>(null);
   const [searchTerm, setSearchTerm] = useState("");
 
-  // Load documents from Firestore
+  // Load initial documents from Firestore
   useEffect(() => {
     setLoading(true);
     try {
-      const unsubscribe = onSnapshot(
-        query(collection(db, "articles"), orderBy("createdAt", "desc")),
-        (snapshot) => {
-          const fetchedDocs = snapshot.docs.map((doc) => {
-            const data = doc.data();
-            return {
-              id: doc.id,
-              name: data.name || "",
-              type: data.type || "document",
-              uploadedAt: data.uploadedAt ? new Date(data.uploadedAt).toISOString() : new Date().toISOString(),
-              summary: data.summary || null,
-              coverImageDataUri: data.coverImageDataUri || null,
-              author: data.author || null,
-              source: data.source || null,
-              edition: data.edition || null,
-              fileUrl: data.fileUrl || null,
-              cloudinaryPublicId: data.cloudinaryPublicId || null,
-            } as DocumentMetadata;
-          });
-          setDocuments(fetchedDocs);
-          setLoading(false);
-          setError(null);
-        },
-        (err) => {
-          console.error("Error loading documents:", err);
-          setError("Failed to load documents. Please try refreshing the page.");
-          setLoading(false);
-          toast({
-            title: "Error Loading Documents",
-            description: "There was a problem loading your documents. Please try again.",
-            variant: "destructive",
-          });
-        }
+      const q = query(
+        collection(db, "articles"),
+        orderBy("createdAt", "desc"),
+        limit(DOCS_PER_PAGE)
       );
+
+      const unsubscribe = onSnapshot(q, (snapshot) => {
+        const fetchedDocs = snapshot.docs.map((doc) => {
+          const data = doc.data();
+          
+          // Handle uploadedAt timestamp properly
+          let uploadedAtISO;
+          try {
+            if (data.uploadedAt?.toDate) {
+              // Handle Firestore Timestamp
+              uploadedAtISO = data.uploadedAt.toDate().toISOString();
+            } else if (data.uploadedAt) {
+              // Handle string or number date
+              uploadedAtISO = new Date(data.uploadedAt).toISOString();
+            } else {
+              // Fallback to current time if no valid date
+              uploadedAtISO = new Date().toISOString();
+            }
+          } catch (error) {
+            console.warn(`Invalid date for document ${doc.id}, using current date`);
+            uploadedAtISO = new Date().toISOString();
+          }
+
+          return {
+            id: doc.id,
+            name: data.name || "",
+            type: data.type || "document",
+            uploadedAt: uploadedAtISO,
+            summary: data.summary || null,
+            coverImageDataUri: data.coverImageDataUri || null,
+            author: data.author || null,
+            source: data.source || null,
+            edition: data.edition || null,
+            fileUrl: data.fileUrl || null,
+            cloudinaryPublicId: data.cloudinaryPublicId || null,
+          } as DocumentMetadata;
+        });
+
+        setDocuments(fetchedDocs);
+        setLastDoc(snapshot.docs[snapshot.docs.length - 1]);
+        setHasMore(snapshot.docs.length === DOCS_PER_PAGE);
+        setLoading(false);
+        setError(null);
+      }, (err) => {
+        console.error("Error loading documents:", err);
+        setError("Failed to load documents. Please try refreshing the page.");
+        setLoading(false);
+        toast({
+          title: "Error Loading Documents",
+          description: "There was a problem loading your documents. Please try again.",
+          variant: "destructive",
+        });
+      });
 
       return () => {
         unsubscribe();
@@ -169,6 +198,71 @@ export default function HomePage() {
       setLoading(false);
     }
   }, [toast]);
+
+  // Load more documents function
+  const loadMoreDocuments = async () => {
+    if (!hasMore || loadingMore || !lastDoc) return;
+
+    setLoadingMore(true);
+    try {
+      const q = query(
+        collection(db, "articles"),
+        orderBy("createdAt", "desc"),
+        startAfter(lastDoc),
+        limit(DOCS_PER_PAGE)
+      );
+
+      const snapshot = await getDocs(q);
+      const newDocs = snapshot.docs.map((doc) => {
+        const data = doc.data();
+        
+        // Handle uploadedAt timestamp properly
+        let uploadedAtISO;
+        try {
+          if (data.uploadedAt?.toDate) {
+            // Handle Firestore Timestamp
+            uploadedAtISO = data.uploadedAt.toDate().toISOString();
+          } else if (data.uploadedAt) {
+            // Handle string or number date
+            uploadedAtISO = new Date(data.uploadedAt).toISOString();
+          } else {
+            // Fallback to current time if no valid date
+            uploadedAtISO = new Date().toISOString();
+          }
+        } catch (error) {
+          console.warn(`Invalid date for document ${doc.id}, using current date`);
+          uploadedAtISO = new Date().toISOString();
+        }
+
+        return {
+          id: doc.id,
+          name: data.name || "",
+          type: data.type || "document",
+          uploadedAt: uploadedAtISO,
+          summary: data.summary || null,
+          coverImageDataUri: data.coverImageDataUri || null,
+          author: data.author || null,
+          source: data.source || null,
+          edition: data.edition || null,
+          fileUrl: data.fileUrl || null,
+          cloudinaryPublicId: data.cloudinaryPublicId || null,
+        } as DocumentMetadata;
+      });
+
+      setDocuments(prev => [...prev, ...newDocs]);
+      setLastDoc(snapshot.docs[snapshot.docs.length - 1]);
+      setHasMore(snapshot.docs.length === DOCS_PER_PAGE);
+    } catch (error) {
+      console.error("Error loading more documents:", error);
+      toast({
+        title: "Error Loading More",
+        description: "Failed to load more documents. Please try again.",
+        variant: "destructive",
+      });
+    } finally {
+      setLoadingMore(false);
+    }
+  };
 
   const slideshowDocuments = documents.slice(0, MAX_SLIDESHOW_ITEMS);
 
@@ -917,6 +1011,26 @@ export default function HomePage() {
                 onDelete={handleDeleteDocument}
               />
             ))}
+          </div>
+        )}
+        
+        {hasMore && !searchTerm && (
+          <div className="mt-8 text-center">
+            <Button
+              onClick={loadMoreDocuments}
+              disabled={loadingMore}
+              variant="outline"
+              className="min-w-[200px]"
+            >
+              {loadingMore ? (
+                <>
+                  <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                  Loading...
+                </>
+              ) : (
+                'Load More'
+              )}
+            </Button>
           </div>
         )}
       </section>

@@ -1,5 +1,6 @@
 "use client";
-import Link from "next/link";
+import React from 'react';
+import Link from 'next/link';
 import { useCallback } from "react";
 import {
   Card,
@@ -23,6 +24,18 @@ import {
 import type { DocumentMetadata, DocumentFile } from "@/lib/types";
 import { format } from "date-fns";
 import { useToast } from "@/hooks/use-toast";
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+  AlertDialogTrigger,
+} from '@/components/ui/alert-dialog';
+import { OptimizedImage } from '@/components/ui/optimized-image';
 
 interface DocumentCardProps {
   doc: DocumentMetadata;
@@ -46,6 +59,19 @@ const dataURIToBlob = (dataURI: string): Blob => {
 
 export function DocumentCard({ doc, onDelete }: DocumentCardProps) {
   const { toast } = useToast();
+
+  const formatDate = (dateString: string) => {
+    try {
+      const date = new Date(dateString);
+      if (isNaN(date.getTime())) {
+        return 'N/A';
+      }
+      return format(date, "MMM d, yyyy");
+    } catch (error) {
+      console.warn(`Invalid date: ${dateString}`);
+      return 'N/A';
+    }
+  };
 
   const handleDownload = useCallback(() => {
     if (typeof window !== "undefined") {
@@ -130,99 +156,80 @@ export function DocumentCard({ doc, onDelete }: DocumentCardProps) {
     }
   }, [doc, toast]);
 
-  const displaySource =
-    doc.source && doc.source.toLowerCase() !== "file upload";
+  const displaySource = doc.source && doc.source.toLowerCase() !== "file upload";
 
   return (
-    <Card className="flex flex-col overflow-hidden shadow-md hover:shadow-xl transition-shadow duration-300 rounded-lg border border-border">
+    <Card className="shadow-lg hover:shadow-xl transition-shadow duration-300 rounded-lg border border-primary/30 overflow-hidden">
       <CardHeader className="pb-3">
-        <div className="flex items-start justify-between mb-2">
-          <FileText className="w-10 h-10 text-primary flex-shrink-0" />
-          <Button
-            variant="ghost"
-            size="icon"
-            onClick={() => onDelete(doc.id)}
-            className="text-muted-foreground hover:text-destructive w-8 h-8">
-            <Trash2 className="w-4 h-4" />
-            <span className="sr-only">Delete document</span>
-          </Button>
-        </div>
-        <CardTitle
-          className="text-lg truncate font-semibold leading-tight"
-          title={doc.name}>
+        <OptimizedImage
+          src={doc.coverImageDataUri}
+          alt={doc.coverImageDataUri ? `Cover for ${doc.name}` : "Abstract document representation"}
+          width={600}
+          height={300}
+          className="w-full h-48 object-cover rounded-t-md"
+          priority={false}
+        />
+        <CardTitle className="text-lg font-semibold leading-tight mt-4 truncate" title={doc.name}>
           {doc.name}
         </CardTitle>
-        <CardDescription className="text-xs text-muted-foreground space-y-0.5 pt-1">
+        <div className="text-xs text-muted-foreground space-y-1 pt-1">
           <div className="flex items-center gap-1">
             <CalendarDays className="w-3 h-3" />
-            Uploaded:{" "}
-            {doc.uploadedAt
-              ? format(new Date(doc.uploadedAt), "MMM d, yyyy")
-              : "N/A"}
+            Uploaded: {formatDate(doc.uploadedAt)}
           </div>
           {doc.author && (
-            <div
-              className="flex items-center gap-1 truncate"
-              title={`Author: ${doc.author}`}>
+            <div className="flex items-center gap-1 truncate" title={`Author: ${doc.author}`}>
               <UserCircle className="w-3 h-3" />
               Author: {doc.author}
             </div>
           )}
-          {displaySource && (
-            <div
-              className="flex items-center gap-1 truncate"
-              title={`Source: ${doc.source}`}>
+          {displaySource && doc.source && (
+            <div className="flex items-center gap-1 truncate" title={`Source: ${doc.source}`}>
               <Building className="w-3 h-3" />
               Source: {doc.source}
             </div>
           )}
           {doc.edition && (
-            <div
-              className="flex items-center gap-1 truncate"
-              title={`Edition: ${doc.edition}`}>
+            <div className="flex items-center gap-1 truncate" title={`Edition: ${doc.edition}`}>
               <Layers className="w-3 h-3" />
               Edition: {doc.edition}
             </div>
           )}
-        </CardDescription>
+        </div>
       </CardHeader>
-      <CardContent className="flex-grow py-3">
-        <p
-          className="text-sm text-muted-foreground truncate"
-          title={
-            displaySource
-              ? `Source: ${doc.source}`
-              : `Type: ${doc.type || "document"}`
-          }>
-          {displaySource
-            ? `Source: ${doc.source}`
-            : `Type: ${doc.type || "document"}`}
+      <CardContent>
+        <p className="text-sm text-muted-foreground line-clamp-2">
+          {doc.summary ? doc.summary : `Type: ${doc.type || "document"}`}
         </p>
-        {doc.summary && (
-          <p
-            className="mt-2 text-xs text-muted-foreground line-clamp-3"
-            title={doc.summary}>
-            <span className="font-medium text-foreground/80">Summary: </span>
-            {doc.summary}
-          </p>
-        )}
+        <div className="flex justify-between items-center mt-4">
+          <AlertDialog>
+            <AlertDialogTrigger asChild>
+              <Button variant="outline" size="sm">
+                <Trash2 className="w-4 h-4" />
+              </Button>
+            </AlertDialogTrigger>
+            <AlertDialogContent>
+              <AlertDialogHeader>
+                <AlertDialogTitle>Delete Document</AlertDialogTitle>
+                <AlertDialogDescription>
+                  Are you sure you want to delete &quot;{doc.name}&quot;? This action cannot be undone.
+                </AlertDialogDescription>
+              </AlertDialogHeader>
+              <AlertDialogFooter>
+                <AlertDialogCancel>Cancel</AlertDialogCancel>
+                <AlertDialogAction onClick={() => onDelete(doc.id)} className="bg-destructive hover:bg-destructive/90">
+                  Delete
+                </AlertDialogAction>
+              </AlertDialogFooter>
+            </AlertDialogContent>
+          </AlertDialog>
+          <Link href={`/documents/${doc.id}`}>
+            <Button size="sm">
+              View <ArrowRight className="ml-2 w-4 h-4" />
+            </Button>
+          </Link>
+        </div>
       </CardContent>
-      <CardFooter className="pt-3 grid grid-cols-2 gap-2">
-        <Link href={`/documents/${doc.id}`}>
-          <Button
-            variant="outline"
-            className="w-full border-primary/50 text-primary hover:bg-primary/10">
-            <ArrowRight className="mr-2 h-4 w-4" /> Open
-          </Button>
-        </Link>
-        <Button
-          variant="outline"
-          className="w-full border-accent/50 text-accent hover:bg-accent/10"
-          onClick={handleDownload}
-          aria-label={`Download ${doc.name}`}>
-          <Download className="mr-2 h-4 w-4" /> Download
-        </Button>
-      </CardFooter>
     </Card>
   );
 }
