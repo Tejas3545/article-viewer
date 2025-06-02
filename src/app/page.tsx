@@ -6,7 +6,6 @@ import Image from "next/image";
 import { DocumentUpload } from "@/components/document/DocumentUpload";
 import { DocumentCard } from "@/components/document/DocumentCard";
 import type { DocumentFile, DocumentMetadata } from "@/lib/types";
-import { useLocalStorage } from "@/hooks/useLocalStorage";
 import { Separator } from "@/components/ui/separator";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
@@ -37,7 +36,16 @@ import {
 } from "@/ai/flows/extract-document-details-flow";
 import { cn } from "@/lib/utils";
 import { db } from "@/lib/firebase";
-import { doc, setDoc, serverTimestamp } from "firebase/firestore";
+import {
+  doc,
+  setDoc,
+  serverTimestamp,
+  collection,
+  query,
+  onSnapshot,
+  orderBy,
+  deleteDoc,
+} from "firebase/firestore";
 
 const MAX_SLIDESHOW_ITEMS = 5;
 const SLIDESHOW_INTERVAL = 3000;
@@ -112,10 +120,7 @@ const isTextPlaceholder = (
 };
 
 export default function HomePage() {
-  const [documents, setDocuments] = useLocalStorage<DocumentMetadata[]>(
-    "docuview-library",
-    []
-  );
+  const [documents, setDocuments] = useState<DocumentMetadata[]>([]);
   const [hydrated, setHydrated] = useState(false);
   const [currentSlideIndex, setCurrentSlideIndex] = useState(0);
   const [slideDirection, setSlideDirection] = useState<"next" | "prev">("next");
@@ -126,6 +131,46 @@ export default function HomePage() {
   useEffect(() => {
     setHydrated(true);
   }, []);
+
+  // Effect to fetch documents from Firestore
+  useEffect(() => {
+    const q = query(collection(db, "articles"), orderBy("createdAt", "desc"));
+    const unsubscribe = onSnapshot(
+      q,
+      (querySnapshot) => {
+        const docsData = querySnapshot.docs.map((docSnapshot) => {
+          // Ensure uploadedAt is correctly handled if it's a Timestamp
+          const data = docSnapshot.data();
+          let uploadedAtString = data.uploadedAt; // Assume it's already a string as per original type
+          if (data.uploadedAt && typeof data.uploadedAt.toDate === 'function') { // Firestore Timestamp object
+            uploadedAtString = data.uploadedAt.toDate().toISOString();
+          } else if (data.uploadedAt instanceof Date) { // JavaScript Date object
+            uploadedAtString = data.uploadedAt.toISOString();
+          }
+          // If data.uploadedAt is already a string, it will be used directly.
+          // If it's null or undefined, uploadedAtString will also be null/undefined.
+
+          return {
+            id: docSnapshot.id,
+            ...data,
+            uploadedAt: uploadedAtString, // Ensure this is a string
+          } as DocumentMetadata;
+        });
+        setDocuments(docsData);
+      },
+      (error) => {
+        console.error("Error fetching documents from Firestore:", error);
+        toast({
+          title: "Error Loading Documents",
+          description:
+            "Could not fetch documents from the cloud. Please check console for details.",
+          variant: "destructive",
+        });
+      }
+    );
+
+    return () => unsubscribe(); // Cleanup subscription
+  }, [toast]); // Added toast to dependency array as it's used in the effect
 
   const slideshowDocuments = documents.slice(0, MAX_SLIDESHOW_ITEMS);
 
@@ -506,7 +551,7 @@ export default function HomePage() {
       resetSlideshowInterval();
     },
     [
-      setDocuments,
+      setDocuments, // Added setDocuments back for optimistic updates
       toast,
       documents.length,
       slideshowDocuments.length,
@@ -566,28 +611,59 @@ export default function HomePage() {
         }
       }
 
-      setDocuments((prevDocs) => {
-        const updatedDocs = prevDocs.filter((doc) => doc.id !== id);
-        const newSlideshowLength = Math.min(
-          MAX_SLIDESHOW_ITEMS,
-          updatedDocs.length
-        );
+      // Firestore deletion
+      try {
+        await deleteDoc(doc(db, "articles", id));
+        toast({
+          title: "Document Deleted from Cloud",
+          description:
+            "The document metadata has been removed from Firestore.",
+          duration: 3000,
+        });
+      } catch (error) {
+        console.error("Error deleting document from Firestore:", error);
+        toast({
+          title: "Firestore Deletion Failed",
+          description:
+            "Could not remove document metadata from Firestore. Local list updated.",
+          variant: "destructive",
+          duration: 5000,
+        });
+      }
 
-        if (currentSlideIndex >= newSlideshowLength && newSlideshowLength > 0) {
-          setCurrentSlideIndex(newSlideshowLength - 1);
-        } else if (newSlideshowLength === 0) {
-          setCurrentSlideIndex(0);
-        }
-        return updatedDocs;
-      });
+      // Local state will be updated by onSnapshot, but we can remove it from localStorage here
       localStorage.removeItem(`docuview-doc-${id}`);
+
+      // Optimistically update UI or rely on onSnapshot.
+      // For now, let onSnapshot handle the UI update.
+      // If immediate UI update is needed:
+      // setDocuments((prevDocs) => prevDocs.filter((doc) => doc.id !== id));
+      // This might cause a flicker if onSnapshot is fast, but can be smoother if it's slow.
+
+      // The following setDocuments block is removed because onSnapshot will handle it.
+      // setDocuments((prevDocs) => {
+      //   const updatedDocs = prevDocs.filter((doc) => doc.id !== id);
+      //   const newSlideshowLength = Math.min(
+      //     MAX_SLIDESHOW_ITEMS,
+      //     updatedDocs.length
+      //   );
+
+      //   if (currentSlideIndex >= newSlideshowLength && newSlideshowLength > 0) {
+      //     setCurrentSlideIndex(newSlideshowLength - 1);
+      //   } else if (newSlideshowLength === 0) {
+      //     setCurrentSlideIndex(0);
+      //   }
+      //   return updatedDocs;
+      // });
+
       toast({
-        title: "Document Deleted",
-        description: "The document has been removed from your library.",
+        title: "Document Deletion Initiated",
+        description:
+          "The document is being removed from your library and the cloud.",
       });
-      resetSlideshowInterval();
+      resetSlideshowInterval(); // This might need adjustment if currentSlideIndex depends on documents directly
     },
-    [setDocuments, toast, currentSlideIndex, resetSlideshowInterval]
+    [documents, toast, currentSlideIndex, resetSlideshowInterval, setDocuments] // documents added as it's used to find docToDelete, setDocuments for optimistic updates if any
   );
 
   const handlePrevSlide = () => {
