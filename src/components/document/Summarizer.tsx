@@ -1,123 +1,164 @@
-
 "use client";
-import { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { Button } from '@/components/ui/button';
 import { Textarea } from '@/components/ui/textarea';
-import { Loader2, Wand2, Info } from 'lucide-react';
+import { Loader2, Wand2, Info, RefreshCw } from 'lucide-react';
 import { summarizeDocument, type SummarizeDocumentInput } from '@/ai/flows/summarize-document';
 import { Card, CardContent, CardDescription, CardFooter, CardHeader, CardTitle } from '@/components/ui/card';
 import { useToast } from '@/hooks/use-toast';
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
-
+import { db } from '@/lib/firebase';
+import { doc, getDoc, updateDoc, serverTimestamp } from 'firebase/firestore';
 
 interface SummarizerProps {
-  documentText: string; // This should be the textContent
-  onSummaryGenerated: (summary: string) => void;
+  documentText: string;
+  documentId: string;
+  onSummaryGenerated?: (summary: string) => void;
 }
 
-export function Summarizer({ documentText, onSummaryGenerated }: SummarizerProps) {
+export function Summarizer({ documentText, documentId, onSummaryGenerated }: SummarizerProps) {
   const [summary, setSummary] = useState<string>('');
-  const [isLoading, setIsLoading] = useState<boolean>(false);
+  const [isGenerating, setIsGenerating] = useState(false);
+  const [error, setError] = useState<string | null>(null);
   const { toast } = useToast();
 
-  const handleSummarize = async () => {
-    if (!documentText || documentText.trim().length < 50) { 
-      toast({ 
-        title: "Not Enough Content", 
-        description: "Document text is too short or empty to summarize effectively.", 
-        variant: "destructive" 
-      });
-      return;
-    }
-    // Check if documentText is a placeholder for complex files
-    if (documentText.includes("(This is a placeholder text. The original file can be downloaded.)") || 
-        documentText.includes("Full parsing requires specific libraries.") ||
-        documentText.includes("Displaying full PDF content here is complex") ||
-        documentText.includes("Displaying full DOCX content here is complex")) {
-      toast({
-        title: "Cannot Summarize Placeholder",
-        description: "The document text is a placeholder. Summarization requires actual text content.",
-        variant: "warning",
-      });
+  useEffect(() => {
+    const checkExistingSummary = async () => {
+      try {
+        const docRef = doc(db, "articles", documentId);
+        const docSnap = await getDoc(docRef);
+        
+        if (docSnap.exists() && docSnap.data().summary) {
+          setSummary(docSnap.data().summary);
+          if (onSummaryGenerated) {
+            onSummaryGenerated(docSnap.data().summary);
+          }
+        }
+      } catch (error) {
+        console.error("Error checking for existing summary:", error);
+      }
+    };
+
+    checkExistingSummary();
+  }, [documentId, onSummaryGenerated]);
+
+  const generateSummary = async () => {
+    if (!documentText.trim()) {
+      setError('No text content available to summarize.');
       return;
     }
 
-    setIsLoading(true);
-    setSummary(''); 
+    setIsGenerating(true);
+    setError(null);
+
     try {
-      const input: SummarizeDocumentInput = { documentText };
-      const result = await summarizeDocument(input);
-      if (result.summary) {
-        setSummary(result.summary);
-        onSummaryGenerated(result.summary);
-        toast({ title: "Summary Generated!", description: "The AI has successfully summarized the document." });
-      } else {
-        toast({ title: "Summarization Failed", description: "The AI could not generate a summary for this document.", variant: "destructive" });
+      const response = await fetch('/api/summarize', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({ text: documentText }),
+      });
+
+      if (!response.ok) {
+        throw new Error('Failed to generate summary');
+      }
+
+      const data = await response.json();
+      const newSummary = data.summary;
+      setSummary(newSummary);
+
+      try {
+        const docRef = doc(db, "articles", documentId);
+        await updateDoc(docRef, {
+          summary: newSummary,
+          summaryGeneratedAt: serverTimestamp(),
+          updatedAt: serverTimestamp()
+        });
+        
+        toast({
+          title: "Summary Saved",
+          description: "The summary has been saved and will be available to all users.",
+        });
+      } catch (firestoreError) {
+        console.error("Error saving summary to Firestore:", firestoreError);
+        toast({
+          title: "Error Saving Summary",
+          description: "The summary was generated but couldn't be saved for other users.",
+          variant: "destructive",
+        });
+      }
+
+      if (onSummaryGenerated) {
+        onSummaryGenerated(newSummary);
       }
     } catch (error) {
-      console.error("Summarization error:", error);
-      toast({ title: "Error", description: "An unexpected error occurred while generating the summary.", variant: "destructive" });
+      console.error('Error generating summary:', error);
+      setError('Failed to generate summary. Please try again.');
+      toast({
+        title: "Summary Generation Failed",
+        description: "Could not generate summary. Please try again.",
+        variant: "destructive",
+      });
     } finally {
-      setIsLoading(false);
+      setIsGenerating(false);
     }
   };
 
   return (
-    <Card className="shadow-sm border-border">
-      <CardHeader>
-        <CardTitle className="flex items-center gap-2 text-lg">
-          <Wand2 className="w-5 h-5 text-accent" /> AI Document Summarizer
-        </CardTitle>
-        <CardDescription>
-          Generate a concise summary of the document's text content using AI.
-        </CardDescription>
+    <Card className="border-none shadow-none bg-transparent">
+      <CardHeader className="pb-3">
+        <CardTitle className="text-lg font-semibold">Document Summary</CardTitle>
+        <CardDescription>AI-generated summary of the document content.</CardDescription>
       </CardHeader>
-      <CardContent>
-        <Button 
-          onClick={handleSummarize} 
-          disabled={isLoading || !documentText} 
-          className="w-full mb-4 bg-accent hover:bg-accent/90 text-accent-foreground transition-colors"
-          aria-live="polite"
-        >
-          {isLoading ? (
-            <>
-              <Loader2 className="mr-2 h-4 w-4 animate-spin" />
-              Generating...
-            </>
-          ) : (
-            <>
-              <Wand2 className="mr-2 h-4 w-4" />
-              Generate Summary
-            </>
-          )}
-        </Button>
-        {summary && (
-          <Textarea
-            readOnly
-            value={summary}
-            placeholder="Summary will appear here..."
-            className="min-h-[200px] bg-muted/30 border-border focus-visible:ring-accent"
-            aria-label="Generated summary"
-          />
+      <CardContent className="space-y-4">
+        {error ? (
+          <div className="text-sm text-destructive">{error}</div>
+        ) : summary ? (
+          <>
+            <Textarea
+              readOnly
+              value={summary}
+              placeholder="Summary will appear here..."
+              className="min-h-[200px] bg-muted/30 border-border focus-visible:ring-accent"
+              aria-label="Generated summary"
+            />
+            <Button
+              variant="outline"
+              size="sm"
+              className="w-full"
+              onClick={generateSummary}
+              disabled={isGenerating}>
+              <RefreshCw className={`mr-2 h-4 w-4 ${isGenerating ? 'animate-spin' : ''}`} />
+              Regenerate Summary
+            </Button>
+          </>
+        ) : (
+          <Button
+            variant="default"
+            className="w-full"
+            onClick={generateSummary}
+            disabled={isGenerating}>
+            {isGenerating ? (
+              <>
+                <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                Generating Summary...
+              </>
+            ) : (
+              'Generate Summary'
+            )}
+          </Button>
         )}
-        {!summary && isLoading && (
-            <p className="text-sm text-muted-foreground text-center py-4">Generating summary, please wait...</p>
-        )}
-        {!summary && !isLoading && (!documentText || documentText.trim().length < 50 || documentText.includes("placeholder text")) && (
-             <Alert variant="default" className="mt-4">
-                <Info className="h-4 w-4" />
-                <AlertTitle>Content Issue</AlertTitle>
-                <AlertDescription>
-                  The document's text content is currently empty, too short, or a placeholder. A summary cannot be generated from it.
-                </AlertDescription>
-            </Alert>
+        {!summary && !isGenerating && (!documentText || documentText.trim().length < 50 || documentText.includes("placeholder text")) && (
+          <Alert variant="default" className="mt-4">
+            <Info className="h-4 w-4" />
+            <AlertTitle>No Summary Available</AlertTitle>
+            <AlertDescription>
+              The document text is either too short, empty, or contains placeholder content. A meaningful summary cannot be generated.
+            </AlertDescription>
+          </Alert>
         )}
       </CardContent>
-      <CardFooter>
-        <p className="text-xs text-muted-foreground">
-          AI summaries can sometimes be inaccurate. Always verify critical information.
-        </p>
-      </CardFooter>
     </Card>
   );
 }

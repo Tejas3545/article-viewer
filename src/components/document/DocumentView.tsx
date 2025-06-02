@@ -439,7 +439,11 @@ export function DocumentView({ docId }: DocumentViewProps) {
           </div>
         </ScrollArea>
         <ScrollArea className="lg:col-span-1 p-3 md:p-4 bg-card/50 lg:h-full">
-          <Summarizer documentText={currentDocument.textContent || ''} onSummaryGenerated={handleSummaryUpdate} />
+          <Summarizer 
+            documentText={currentDocument.textContent || ''} 
+            documentId={currentDocument.id}
+            onSummaryGenerated={handleSummaryUpdate} 
+          />
         </ScrollArea>
       </div>
     </div>
