@@ -16,7 +16,14 @@ const nextConfig: NextConfig = {
         port: '',
         pathname: '/**',
       },
+      {
+        protocol: 'https',
+        hostname: 'res.cloudinary.com',
+        port: '',
+        pathname: '/**',
+      }
     ],
+    unoptimized: true
   },
   webpack: (config) => {
     config.resolve.alias.canvas = false;

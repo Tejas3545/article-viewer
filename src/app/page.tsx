@@ -37,7 +37,7 @@ import {
 } from "@/ai/flows/extract-document-details-flow";
 import { cn } from "@/lib/utils";
 import { db } from "@/lib/firebase";
-import { doc, setDoc, serverTimestamp } from "firebase/firestore";
+import { doc, setDoc, serverTimestamp, collection, onSnapshot, deleteDoc } from "firebase/firestore";
 
 const MAX_SLIDESHOW_ITEMS = 5;
 const SLIDESHOW_INTERVAL = 3000;
@@ -112,10 +112,7 @@ const isTextPlaceholder = (
 };
 
 export default function HomePage() {
-  const [documents, setDocuments] = useLocalStorage<DocumentMetadata[]>(
-    "docuview-library",
-    []
-  );
+  const [documents, setDocuments] = useState<DocumentMetadata[]>([]);
   const [hydrated, setHydrated] = useState(false);
   const [currentSlideIndex, setCurrentSlideIndex] = useState(0);
   const [slideDirection, setSlideDirection] = useState<"next" | "prev">("next");
@@ -123,8 +120,34 @@ export default function HomePage() {
   const slideshowIntervalRef = React.useRef<NodeJS.Timeout | null>(null);
   const [searchTerm, setSearchTerm] = useState("");
 
+  // Load documents from Firestore
   useEffect(() => {
-    setHydrated(true);
+    const unsubscribe = onSnapshot(collection(db, "articles"), (snapshot) => {
+      const fetchedDocs = snapshot.docs.map((doc) => {
+        const data = doc.data();
+        const uploadedAtDate = data.uploadedAt instanceof Date 
+          ? data.uploadedAt 
+          : new Date(data.uploadedAt || Date.now());
+          
+        return {
+          id: doc.id,
+          name: data.name || "",
+          type: data.type || "document",
+          uploadedAt: uploadedAtDate.toISOString(), // Convert to ISO string for consistency
+          summary: data.summary || null,
+          coverImageDataUri: data.coverImageDataUri || null,
+          author: data.author || null,
+          source: data.source || null,
+          edition: data.edition || null,
+          fileUrl: data.fileUrl || null,
+          cloudinaryPublicId: data.cloudinaryPublicId || null,
+        } as DocumentMetadata;
+      });
+      setDocuments(fetchedDocs);
+      setHydrated(true);
+    });
+
+    return () => unsubscribe();
   }, []);
 
   const slideshowDocuments = documents.slice(0, MAX_SLIDESHOW_ITEMS);
@@ -457,37 +480,48 @@ export default function HomePage() {
       // Save metadata to Firestore
       try {
         const articleRef = doc(db, "articles", finalMetadata.id);
-
-        // Prepare data for Firestore: select specific fields and convert undefined to null
-        const articleDataForFirestore = {
-          id: finalMetadata.id, // Storing the document ID as a field
-          author: finalMetadata.author === undefined ? null : finalMetadata.author,
-          name: finalMetadata.name, // Name is expected to be present
-          fileUrl: finalMetadata.fileUrl === undefined ? null : finalMetadata.fileUrl,
-          edition: finalMetadata.edition === undefined ? null : finalMetadata.edition,
-          uploadedAt: finalMetadata.uploadedAt === undefined ? null : finalMetadata.uploadedAt, // Using uploadedAt as date of creation
-        };
-
-        await setDoc(articleRef, {
-          ...articleDataForFirestore, // Use the specifically selected and sanitized data
+        
+        // Prepare the data, converting undefined to null and handling dates
+        const firestoreData = {
+          id: finalMetadata.id,
+          name: finalMetadata.name || null,
+          type: finalMetadata.type || "document",
+          uploadedAt: serverTimestamp(), // Always use serverTimestamp for the upload time
+          summary: finalMetadata.summary || null,
+          coverImageDataUri: finalCoverImageDataUri || null,
+          author: finalMetadata.author || null,
+          source: finalMetadata.source || null,
+          edition: finalMetadata.edition || null,
+          fileUrl: finalMetadata.fileUrl || null,
+          cloudinaryPublicId: finalMetadata.cloudinaryPublicId || null,
           createdAt: serverTimestamp(),
           updatedAt: serverTimestamp(),
-        });
+          textContent: currentDocumentState.textContent || null,
+        } as const;
+
+        const cleanedData = Object.fromEntries(
+          Object.entries(firestoreData).map(([key, value]) => [key, value === undefined ? null : value])
+        );
+
+        await setDoc(articleRef, cleanedData);
+        
         toast({
-          title: "Metadata Saved to Cloud",
-          description: `${finalMetadata.name} metadata saved to Firestore.`,
+          title: "Document Saved",
+          description: `${finalMetadata.name} saved and available to all users.`,
           duration: 3000,
         });
-      } catch (error: any) { // Added :any type for error
-        console.error("Error saving metadata to Firestore:", error);
+      } catch (error: any) {
+        console.error("Error saving to Firestore:", error);
         toast({
-          title: "Firestore Save Failed",
-          description: `Could not save metadata for ${finalMetadata.name} to Firestore. Error: ${error?.message || String(error)}`,
+          title: "Save Failed",
+          description: `Could not save ${finalMetadata.name}. Error: ${error?.message || String(error)}`,
           variant: "destructive",
           duration: 5000,
         });
+        return;
       }
 
+      // Update local state
       setDocuments((prevDocs) => {
         const existingDocIndex = prevDocs.findIndex(
           (d) => d.id === finalMetadata.id
@@ -505,24 +539,33 @@ export default function HomePage() {
       }
       resetSlideshowInterval();
     },
-    [
-      setDocuments,
-      toast,
-      documents.length,
-      slideshowDocuments.length,
-      resetSlideshowInterval,
-    ]
+    [setDocuments, toast, documents.length, slideshowDocuments.length, resetSlideshowInterval]
   );
 
   const handleDeleteDocument = useCallback(
     async (id: string) => {
       const docToDelete = documents.find((doc) => doc.id === id);
 
-      if (
-        docToDelete &&
-        docToDelete.fileUrl &&
-        docToDelete.cloudinaryPublicId
-      ) {
+      // Delete from Firestore first
+      try {
+        await deleteDoc(doc(db, "articles", id));
+        toast({
+          title: "Document Deleted",
+          description: "The document has been removed for all users.",
+        });
+      } catch (error: any) {
+        console.error("Error deleting from Firestore:", error);
+        toast({
+          title: "Delete Failed",
+          description: `Could not delete document. Error: ${error?.message || String(error)}`,
+          variant: "destructive",
+          duration: 5000,
+        });
+        return;
+      }
+
+      // Handle Cloudinary deletion if needed
+      if (docToDelete?.fileUrl && docToDelete?.cloudinaryPublicId) {
         let resourceTypeForDelete = docToDelete.type.startsWith("image/")
           ? "image"
           : docToDelete.type.startsWith("video/")
@@ -566,6 +609,7 @@ export default function HomePage() {
         }
       }
 
+      // Update local state
       setDocuments((prevDocs) => {
         const updatedDocs = prevDocs.filter((doc) => doc.id !== id);
         const newSlideshowLength = Math.min(
