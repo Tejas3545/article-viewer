@@ -37,7 +37,7 @@ import {
 } from "@/ai/flows/extract-document-details-flow";
 import { cn } from "@/lib/utils";
 import { db } from "@/lib/firebase";
-import { doc, setDoc, serverTimestamp, collection, onSnapshot, deleteDoc } from "firebase/firestore";
+import { doc, setDoc, serverTimestamp, collection, onSnapshot, deleteDoc, query, orderBy } from "firebase/firestore";
 
 const MAX_SLIDESHOW_ITEMS = 5;
 const SLIDESHOW_INTERVAL = 3000;
@@ -113,7 +113,8 @@ const isTextPlaceholder = (
 
 export default function HomePage() {
   const [documents, setDocuments] = useState<DocumentMetadata[]>([]);
-  const [hydrated, setHydrated] = useState(false);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
   const [currentSlideIndex, setCurrentSlideIndex] = useState(0);
   const [slideDirection, setSlideDirection] = useState<"next" | "prev">("next");
   const { toast } = useToast();
@@ -122,33 +123,52 @@ export default function HomePage() {
 
   // Load documents from Firestore
   useEffect(() => {
-    const unsubscribe = onSnapshot(collection(db, "articles"), (snapshot) => {
-      const fetchedDocs = snapshot.docs.map((doc) => {
-        const data = doc.data();
-        const uploadedAtDate = data.uploadedAt instanceof Date 
-          ? data.uploadedAt 
-          : new Date(data.uploadedAt || Date.now());
-          
-        return {
-          id: doc.id,
-          name: data.name || "",
-          type: data.type || "document",
-          uploadedAt: uploadedAtDate.toISOString(), // Convert to ISO string for consistency
-          summary: data.summary || null,
-          coverImageDataUri: data.coverImageDataUri || null,
-          author: data.author || null,
-          source: data.source || null,
-          edition: data.edition || null,
-          fileUrl: data.fileUrl || null,
-          cloudinaryPublicId: data.cloudinaryPublicId || null,
-        } as DocumentMetadata;
-      });
-      setDocuments(fetchedDocs);
-      setHydrated(true);
-    });
+    setLoading(true);
+    try {
+      const unsubscribe = onSnapshot(
+        query(collection(db, "articles"), orderBy("createdAt", "desc")),
+        (snapshot) => {
+          const fetchedDocs = snapshot.docs.map((doc) => {
+            const data = doc.data();
+            return {
+              id: doc.id,
+              name: data.name || "",
+              type: data.type || "document",
+              uploadedAt: data.uploadedAt ? new Date(data.uploadedAt).toISOString() : new Date().toISOString(),
+              summary: data.summary || null,
+              coverImageDataUri: data.coverImageDataUri || null,
+              author: data.author || null,
+              source: data.source || null,
+              edition: data.edition || null,
+              fileUrl: data.fileUrl || null,
+              cloudinaryPublicId: data.cloudinaryPublicId || null,
+            } as DocumentMetadata;
+          });
+          setDocuments(fetchedDocs);
+          setLoading(false);
+          setError(null);
+        },
+        (err) => {
+          console.error("Error loading documents:", err);
+          setError("Failed to load documents. Please try refreshing the page.");
+          setLoading(false);
+          toast({
+            title: "Error Loading Documents",
+            description: "There was a problem loading your documents. Please try again.",
+            variant: "destructive",
+          });
+        }
+      );
 
-    return () => unsubscribe();
-  }, []);
+      return () => {
+        unsubscribe();
+      };
+    } catch (err) {
+      console.error("Error setting up Firestore listener:", err);
+      setError("Failed to connect to the database. Please check your internet connection.");
+      setLoading(false);
+    }
+  }, [toast]);
 
   const slideshowDocuments = documents.slice(0, MAX_SLIDESHOW_ITEMS);
 
@@ -177,6 +197,8 @@ export default function HomePage() {
 
   const handleFileUpload = useCallback(
     async (uploadedFile: DocumentFile & { originalFile?: File }) => {
+      if (loading) return; // Don't allow uploads while loading
+
       let currentDocumentState: DocumentFile = { ...uploadedFile };
       let storedDocumentVersion: DocumentFile | null = null;
       let finalCoverImageDataUri: string | undefined = undefined;
@@ -539,7 +561,7 @@ export default function HomePage() {
       }
       resetSlideshowInterval();
     },
-    [setDocuments, toast, documents.length, slideshowDocuments.length, resetSlideshowInterval]
+    [setDocuments, toast, documents.length, slideshowDocuments.length, resetSlideshowInterval, loading]
   );
 
   const handleDeleteDocument = useCallback(
@@ -656,7 +678,7 @@ export default function HomePage() {
     }
   };
 
-  if (!hydrated) {
+  if (loading) {
     return (
       <div className="container mx-auto p-4 md:p-8 space-y-10">
         <div className="grid grid-cols-1 md:grid-cols-5 gap-8 animate-pulse">
@@ -671,6 +693,17 @@ export default function HomePage() {
               <div key={i} className="h-72 bg-muted rounded-lg"></div>
             ))}
           </div>
+        </div>
+      </div>
+    );
+  }
+
+  if (error) {
+    return (
+      <div className="container mx-auto p-4 md:p-8">
+        <div className="bg-destructive/10 border border-destructive text-destructive px-4 py-3 rounded-lg">
+          <h2 className="text-lg font-semibold">Error Loading Documents</h2>
+          <p>{error}</p>
         </div>
       </div>
     );
