@@ -15,7 +15,7 @@ export async function POST(request: Request) {
       );
     }
 
-    if (!process.env.GOOGLE_AI_API_KEY) {
+    if (!process.env.GEMINI_API_KEY) {
       return NextResponse.json(
         { error: 'Google AI API key not configured' },
         { status: 500 }
@@ -23,7 +23,7 @@ export async function POST(request: Request) {
     }
 
     // Initialize the model
-    const model = genAI.getGenerativeModel({ model: "gemini-pro" });
+    const model = genAI.getGenerativeModel({ model: "gemini-1.5-flash" });
 
     // Generate content
     const prompt = `Please provide a concise summary of the following text. Focus on the main points and key information:\n\n${text}`;
