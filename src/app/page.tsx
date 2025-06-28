@@ -1,7 +1,10 @@
 "use client";
+"use client";
 import React from "react";
 import { useState, useEffect, useCallback } from "react";
 import Link from "next/link";
+import { useAuth } from "@/hooks/useAuth"; // Import the hook
+// Loader2 is already imported below, ensure it's available
 import Image from "next/image";
 import { DocumentUpload } from "@/components/document/DocumentUpload";
 import { DocumentCard } from "@/components/document/DocumentCard";
@@ -115,8 +118,10 @@ const isTextPlaceholder = (
 };
 
 export default function HomePage() {
+  const { user, loading: authLoading, isAuthenticated } = useAuth({ redirectOnUnauthenticated: '/login' });
+
   const [documents, setDocuments] = useState<DocumentMetadata[]>([]);
-  const [loading, setLoading] = useState(true);
+  const [docsLoading, setDocsLoading] = useState(true); // Renamed from loading
   const [error, setError] = useState<string | null>(null);
   const [currentSlideIndex, setCurrentSlideIndex] = useState(0);
   const [slideDirection, setSlideDirection] = useState<"next" | "prev">("next");
@@ -129,7 +134,12 @@ export default function HomePage() {
 
   // Load initial documents from Firestore
   useEffect(() => {
-    setLoading(true);
+    if (!isAuthenticated) {
+      setDocsLoading(false); // Ensure doc loading is false if not authenticated
+      setDocuments([]); // Clear documents if not authenticated
+      return; // Don't fetch documents if not authenticated
+    }
+    setDocsLoading(true);
     try {
       const q = query(
         collection(db, "articles"),
@@ -177,12 +187,12 @@ export default function HomePage() {
         setDocuments(fetchedDocs);
         setLastDoc(snapshot.docs[snapshot.docs.length - 1]);
         setHasMore(snapshot.docs.length === DOCS_PER_PAGE);
-        setLoading(false);
+        setDocsLoading(false);
         setError(null);
       }, (err) => {
         console.error("Error loading documents:", err);
         setError("Failed to load documents. Please try refreshing the page.");
-        setLoading(false);
+        setDocsLoading(false);
         toast({
           title: "Error Loading Documents",
           description: "There was a problem loading your documents. Please try again.",
@@ -196,9 +206,9 @@ export default function HomePage() {
     } catch (err) {
       console.error("Error setting up Firestore listener:", err);
       setError("Failed to connect to the database. Please check your internet connection.");
-      setLoading(false);
+      setDocsLoading(false);
     }
-  }, [toast]);
+  }, [toast, isAuthenticated]); // Added isAuthenticated
 
   // Load more documents function
   const loadMoreDocuments = async () => {
@@ -292,7 +302,7 @@ export default function HomePage() {
 
   const handleFileUpload = useCallback(
     async (uploadedFile: DocumentFile & { originalFile?: File }) => {
-      if (loading) return; // Don't allow uploads while loading
+      if (docsLoading || !isAuthenticated) return; // Don't allow uploads while loading or not authenticated
 
       let currentDocumentState: DocumentFile = { ...uploadedFile };
       let storedDocumentVersion: DocumentFile | null = null;
@@ -673,7 +683,7 @@ export default function HomePage() {
       }
       resetSlideshowInterval();
     },
-    [setDocuments, toast, documents.length, slideshowDocuments.length, resetSlideshowInterval, loading]
+    [setDocuments, toast, documents.length, slideshowDocuments.length, resetSlideshowInterval, docsLoading, isAuthenticated]
   );
 
   const handleDeleteDocument = useCallback(
@@ -790,14 +800,38 @@ export default function HomePage() {
     }
   };
 
-  if (loading) {
+  // If auth is loading, show a full page loader
+  if (authLoading) {
     return (
-      <div className="container mx-auto p-4 md:p-8 space-y-10">
-        <div className="grid grid-cols-1 md:grid-cols-5 gap-8 animate-pulse">
-          <div className="md:col-span-3 h-96 bg-muted rounded-lg shadow-md"></div>
-          <div className="md:col-span-2 h-96 bg-muted rounded-lg shadow-md"></div>
+      <div className="flex items-center justify-center min-h-screen bg-background">
+        <Loader2 className="h-16 w-16 animate-spin text-primary" />
+        <p className="ml-4 text-lg">Loading user session...</p>
+      </div>
+    );
+  }
+
+  // If not authenticated, the hook should redirect.
+  // This is a fallback or for when redirectOnUnauthenticated is not set.
+  if (!isAuthenticated) {
+    return (
+      <div className="flex items-center justify-center min-h-screen bg-background">
+        <p className="text-lg">Redirecting to login...</p>
+      </div>
+    );
+    // Alternatively, render null or a more specific message.
+    // The hook with redirectOnUnauthenticated should prevent this from being shown for long.
+  }
+
+  // Original loading state for documents (now docsLoading)
+  if (docsLoading) {
+    return (
+      <div className="container mx-auto p-4 md:p-8 space-y-10 animate-pulse">
+        {/* Simplified skeleton based on original, or a new full page skeleton */}
+        <div className="grid grid-cols-1 lg:grid-cols-5 gap-8">
+          <div className="lg:col-span-3 h-96 bg-muted rounded-lg"></div>
+          <div className="lg:col-span-2 h-96 bg-muted rounded-lg"></div>
         </div>
-        <Separator className="my-8" />
+        <Separator className="my-8 !bg-accent/50 h-0.5" />
         <div>
           <div className="h-8 w-1/2 bg-muted rounded mb-6"></div>
           <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-6">
@@ -843,6 +877,7 @@ export default function HomePage() {
   });
 
   return (
+    // Main content is rendered only if authenticated and not loading docs
     <div className="container mx-auto p-4 md:p-8 space-y-10">
       <section
         aria-labelledby="dashboard-top-section"
