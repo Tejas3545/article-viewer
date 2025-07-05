@@ -31,7 +31,14 @@ export default function LoginPage() {
         title: "Login Successful",
         description: "You have successfully logged in.",
       });
-      router.push("/");
+      // Check if there's a redirect path stored in localStorage
+      const redirectPath = localStorage.getItem('redirectAfterLogin');
+      if (redirectPath) {
+        localStorage.removeItem('redirectAfterLogin'); // Clean up
+        router.push(redirectPath);
+      } else {
+        router.push("/"); // Default redirect to homepage
+      }
     } catch (e) {
       const error = e as AuthError;
       let errorMessage = "An unexpected error occurred. Please try again.";

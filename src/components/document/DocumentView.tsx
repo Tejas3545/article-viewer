@@ -1,5 +1,7 @@
 "use client";
 import React, { useState, useEffect, useMemo, useCallback } from 'react';
+import { useRouter } from 'next/navigation'; // Import useRouter
+import { useAuth } from '@/hooks/useAuth'; // Import useAuth
 import type { DocumentFile, DocumentMetadata } from '@/lib/types';
 import { Input } from '@/components/ui/input';
 import { ScrollArea } from '@/components/ui/scroll-area';
@@ -48,15 +50,32 @@ const isTextPlaceholder = (text: string | undefined, docName: string | undefined
 };
 
 export function DocumentView({ docId }: DocumentViewProps) {
+  const { user, loading: authLoading, isAuthenticated } = useAuth();
+  const router = useRouter();
   const [currentDocument, setCurrentDocument] = useState<DocumentFile | null>(null);
-  const [isLoading, setIsLoading] = useState(true);
+  const [isLoading, setIsLoading] = useState(true); // This will now primarily be for document data loading
   const [searchTerm, setSearchTerm] = useState('');
   const [fontSize, setFontSize] = useState(16);
   const { toast } = useToast();
 
   useEffect(() => {
+    if (authLoading) {
+      // Wait for authentication to resolve
+      return;
+    }
+
+    if (!isAuthenticated) {
+      // If not authenticated after auth check, redirect to login
+      // Store the current path to redirect back after login
+      const currentPath = `/documents/${docId}`;
+      localStorage.setItem('redirectAfterLogin', currentPath);
+      router.push('/login');
+      return;
+    }
+
+    // Proceed to load document if authenticated
     if (docId && typeof window !== 'undefined') {
-      setIsLoading(true);
+      setIsLoading(true); // For document loading
       
       const loadDocument = async () => {
         try {
@@ -119,7 +138,7 @@ export function DocumentView({ docId }: DocumentViewProps) {
 
       loadDocument();
     }
-  }, [docId, toast]);
+  }, [docId, toast, authLoading, isAuthenticated, router]);
 
   const handleSummaryUpdate = useCallback(async (summary: string) => {
     if (currentDocument) {
@@ -301,16 +320,20 @@ export function DocumentView({ docId }: DocumentViewProps) {
     }
   }, [currentDocument, toast]);
 
-  if (isLoading) {
+  // Display loading indicator while auth state or document data is loading
+  if (authLoading || (isAuthenticated && isLoading)) {
     return (
       <div className="flex flex-col items-center justify-center h-[calc(100vh-4rem)] p-8">
-        <Loader2 className="w-12 h-12 animate-spin text-primary mb-4" /> 
-        <p className="text-lg text-muted-foreground">Loading document...</p>
+        <Loader2 className="w-12 h-12 animate-spin text-primary mb-4" />
+        <p className="text-lg text-muted-foreground">
+          {authLoading ? "Checking authentication..." : "Loading document..."}
+        </p>
       </div>
     );
   }
 
-  if (!currentDocument) {
+  // If authenticated but document fails to load or doesn't exist
+  if (isAuthenticated && !currentDocument) {
     return (
       <div className="flex flex-col items-center justify-center h-[calc(100vh-4rem)] p-8 text-center">
         <FileText className="w-16 h-16 text-destructive mb-4" />
