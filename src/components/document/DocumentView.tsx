@@ -320,20 +320,43 @@ export function DocumentView({ docId }: DocumentViewProps) {
     }
   }, [currentDocument, toast]);
 
-  // Display loading indicator while auth state or document data is loading
-  if (authLoading || (isAuthenticated && isLoading)) {
+  // 1. Handle Auth Loading state
+  if (authLoading) {
     return (
       <div className="flex flex-col items-center justify-center h-[calc(100vh-4rem)] p-8">
         <Loader2 className="w-12 h-12 animate-spin text-primary mb-4" />
-        <p className="text-lg text-muted-foreground">
-          {authLoading ? "Checking authentication..." : "Loading document..."}
-        </p>
+        <p className="text-lg text-muted-foreground">Checking authentication...</p>
       </div>
     );
   }
 
-  // If authenticated but document fails to load or doesn't exist
-  if (isAuthenticated && !currentDocument) {
+  // 2. Handle Not Authenticated state (after auth check is complete)
+  // This is crucial: if not authenticated, render nothing or a redirect message,
+  // and let the useEffect handle the actual redirect. Do not proceed to render document.
+  if (!isAuthenticated) {
+    // The useEffect for redirection is already in place.
+    // Optionally, render a message here, or null.
+    // For a cleaner UX, often null is fine as the redirect should be quick.
+    return (
+      <div className="flex flex-col items-center justify-center h-[calc(100vh-4rem)] p-8">
+        <Loader2 className="w-12 h-12 animate-spin text-primary mb-4" />
+        <p className="text-lg text-muted-foreground">Redirecting to login...</p>
+      </div>
+    );
+  }
+
+  // 3. Handle Authenticated User: Document Loading state
+  if (isLoading) { // `isLoading` is for the document data itself
+    return (
+      <div className="flex flex-col items-center justify-center h-[calc(100vh-4rem)] p-8">
+        <Loader2 className="w-12 h-12 animate-spin text-primary mb-4" />
+        <p className="text-lg text-muted-foreground">Loading document...</p>
+      </div>
+    );
+  }
+
+  // 4. Handle Authenticated User: Document Not Found (or failed to load)
+  if (!currentDocument) { // This check is now implicitly for authenticated users
     return (
       <div className="flex flex-col items-center justify-center h-[calc(100vh-4rem)] p-8 text-center">
         <FileText className="w-16 h-16 text-destructive mb-4" />
